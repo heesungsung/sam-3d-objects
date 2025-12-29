@@ -112,7 +112,11 @@ class FlexiCubes:
         """
         Regularizer L_dev as in Equation 8
         """
+        # Ensure ue has the same dtype as vd
+        ue = ue.to(vd.dtype)
         dist = torch.norm(ue - torch.index_select(input=vd, index=edge_group_to_vd, dim=0), dim=-1)
+        # Ensure dist has the same dtype as vd (torch.norm may return float32)
+        dist = dist.to(vd.dtype)
         mean_l2 = torch.zeros_like(vd[:, 0])
         mean_l2 = (mean_l2).index_add_(0, edge_group_to_vd, dist) / vd_num_edges.squeeze(1).float()
         mad = (dist - torch.index_select(input=mean_l2, index=edge_group_to_vd, dim=0)).abs()
@@ -301,8 +305,9 @@ class FlexiCubes:
         # else:
         #     vd_color = None
 
-        vd = torch.zeros((total_num_vd, 3), device=self.device)
-        beta_sum = torch.zeros((total_num_vd, 1), device=self.device)
+        # Use beta.dtype to ensure dtype consistency with beta_group
+        vd = torch.zeros((total_num_vd, 3), device=self.device, dtype=beta.dtype)
+        beta_sum = torch.zeros((total_num_vd, 1), device=self.device, dtype=beta.dtype)
 
         idx_group = torch.gather(input=idx_map.reshape(-1), dim=0, index=edge_group_to_cube * 12 + edge_group)
 
@@ -312,10 +317,14 @@ class FlexiCubes:
 
         zero_crossing_group = torch.index_select(
             input=zero_crossing, index=idx_group.reshape(-1), dim=0).reshape(-1, 3)
+        # Convert zero_crossing_group to beta.dtype to ensure dtype consistency with vd
+        zero_crossing_group = zero_crossing_group.to(beta.dtype)
 
         alpha_group = torch.index_select(input=alpha_nx12x2.reshape(-1, 2), dim=0,
                                             index=edge_group_to_cube * 12 + edge_group).reshape(-1, 2, 1)
         ue_group = self._linear_interp(s_group * alpha_group, x_group)
+        # Convert ue_group to beta.dtype to ensure dtype consistency
+        ue_group = ue_group.to(beta.dtype)
 
         beta_group = torch.gather(input=beta.reshape(-1), dim=0,
                                     index=edge_group_to_cube * 12 + edge_group).reshape(-1, 1)
@@ -326,9 +335,12 @@ class FlexiCubes:
         interpolate colors use the same method as dual vertices
         '''
         if voxelgrid_colors is not None:
-            vd_color = torch.zeros((total_num_vd, C), device=self.device)
+            # Use beta.dtype to ensure dtype consistency
+            vd_color = torch.zeros((total_num_vd, C), device=self.device, dtype=beta.dtype)
             c_group = torch.index_select(input=surf_edges_c, index=idx_group.reshape(-1), dim=0).reshape(-1, 2, C)
             uc_group = self._linear_interp(s_group * alpha_group, c_group)
+            # Convert uc_group to beta.dtype to ensure dtype consistency
+            uc_group = uc_group.to(beta.dtype)
             vd_color = vd_color.index_add_(0, index=edge_group_to_vd, source=uc_group * beta_group) / beta_sum
         else:
             vd_color = None

@@ -611,7 +611,8 @@ def to_glb(
     """
     vertices = mesh.vertices.float().cpu().numpy()
     faces = mesh.faces.cpu().numpy()
-    vert_colors = mesh.vertex_attrs[:, :3].cpu().numpy()
+    # Convert to float32 before numpy conversion (bfloat16 is not supported by numpy)
+    vert_colors = mesh.vertex_attrs[:, :3].float().cpu().numpy()
 
     if with_mesh_postprocess:
         # mesh postprocess

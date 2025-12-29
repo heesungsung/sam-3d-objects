@@ -104,6 +104,7 @@ class Inference:
         mask: Optional[Union[None, Image.Image, np.ndarray]],
         seed: Optional[int] = None,
         pointmap=None,
+        decode_formats=None,
     ) -> dict:
         image = self.merge_mask_to_rgba(image, mask)
         return self._pipeline.run(
@@ -117,6 +118,7 @@ class Inference:
             use_vertex_color=True,
             stage1_inference_steps=None,
             pointmap=pointmap,
+            decode_formats=decode_formats,
         )
 
 

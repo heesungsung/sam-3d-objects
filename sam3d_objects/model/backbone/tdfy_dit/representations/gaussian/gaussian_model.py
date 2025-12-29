@@ -134,19 +134,21 @@ class Gaussian:
         return l
 
     def save_ply(self, path):
-        xyz = self.get_xyz.detach().cpu().numpy()
+        # Convert to float32 before numpy conversion (bfloat16 is not supported by numpy)
+        xyz = self.get_xyz.detach().float().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = (
             self._features_dc.detach()
             .transpose(1, 2)
             .flatten(start_dim=1)
             .contiguous()
+            .float()
             .cpu()
             .numpy()
         )
-        opacities = inverse_sigmoid(self.get_opacity).detach().cpu().numpy()
-        scale = torch.log(self.get_scaling).detach().cpu().numpy()
-        rotation = (self._rotation + self.rots_bias[None, :]).detach().cpu().numpy()
+        opacities = inverse_sigmoid(self.get_opacity).detach().float().cpu().numpy()
+        scale = torch.log(self.get_scaling).detach().float().cpu().numpy()
+        rotation = (self._rotation + self.rots_bias[None, :]).detach().float().cpu().numpy()
 
         dtype_full = [
             (attribute, "f4") for attribute in self.construct_list_of_attributes()

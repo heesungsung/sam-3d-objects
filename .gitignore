@@ -1,1 +1,5 @@
 __pycache__
+notebook/images/
+**/.gradio/
+**/checkpoints/**
+/third_party
