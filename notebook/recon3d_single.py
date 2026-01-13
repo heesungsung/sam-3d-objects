@@ -28,6 +28,7 @@ from sam3.model.box_ops import box_xywh_to_cxcywh
 from sam3.visualization_utils import plot_mask, plot_results, COLORS
 from inference import Inference, load_image, interactive_visualizer
 from sam3d_objects.utils.visualization import SceneVisualizer
+import open3d as o3d
 
 
 def setup_device():
@@ -182,8 +183,7 @@ def generate_mesh_with_sam3d(
     config_path: str,
     seed: Optional[int] = 42,
     output_dir: Optional[str] = None,
-    save_ply: bool = True,
-    skip_mesh: bool = False,
+    generate_mesh: bool = True,  # If True, generate both mesh and gs; if False, only gs
 ) -> dict:
     """
     Generate mesh using SAM3D from original image and binary mask
@@ -194,8 +194,7 @@ def generate_mesh_with_sam3d(
         config_path: Path to SAM3D pipeline config file
         seed: Random seed
         output_dir: Directory to save outputs
-        save_ply: Whether to save PLY file
-        skip_mesh: If True, skip mesh decoding (only generate gaussian splatting)
+        generate_mesh: If True, generate both mesh and gaussian splatting; if False, only gaussian splatting
     
     Returns:
         output: Dictionary containing mesh and/or gaussian splatting outputs
@@ -203,10 +202,15 @@ def generate_mesh_with_sam3d(
     print("Loading SAM3D model...")
     inference = Inference(config_path, compile=False)
     
-    print("\nGenerating mesh with SAM3D...")
-    decode_formats = ["gaussian"] if skip_mesh else None
-    if skip_mesh:
-        print("  Skipping mesh decoding (using gaussian splatting only)")
+    print("\nGenerating 3D representation with SAM3D...")
+    
+    # Determine decode formats
+    if generate_mesh:
+        decode_formats = ["mesh", "gaussian"]  # mesh needs gaussian for texture baking
+        print("  Generating mesh and gaussian splatting")
+    else:
+        decode_formats = ["gaussian"]
+        print("  Generating gaussian splatting only")
     
     try:
         output = inference(image, mask, seed=seed, decode_formats=decode_formats)
@@ -214,7 +218,7 @@ def generate_mesh_with_sam3d(
         error_msg = str(e)
         if "spconv" in error_msg.lower() or "can't find suitable algorithm" in error_msg:
             print("\n  spconv CUDA kernel error occurred.")
-            if not skip_mesh:
+            if generate_mesh:
                 try:
                     print("  Retrying with gaussian splatting only (mesh skipped)...")
                     output = inference(image, mask, seed=seed, decode_formats=["gaussian"])
@@ -223,7 +227,7 @@ def generate_mesh_with_sam3d(
                     print(f"  Recovery failed: {e2}")
                     raise e
             else:
-                print("\n  Mesh was already skipped. Error persists.")
+                print("\n  Gaussian splatting generation failed.")
                 raise
         else:
             raise
@@ -385,40 +389,23 @@ def process_pose_estimation(output: dict, save_path: Optional[str] = None, save_
     }
     
     # Print pose information
-    print(f"  Translation (camera frame): [{translation[0]:.4f}, {translation[1]:.4f}, {translation[2]:.4f}]")
-    print(f"  Rotation (quaternion [w, x, y, z]): [{rotation[0]:.4f}, {rotation[1]:.4f}, {rotation[2]:.4f}, {rotation[3]:.4f}]")
-    print(f"  Scale: [{scale[0]:.4f}, {scale[1]:.4f}, {scale[2]:.4f}]")
-    print("\n  Frame Details:")
-    print("  - Transformation from object's local coordinate to the camera coordinate frame (right-handed system)")
-    print("    * Origin: camera position [0, 0, 0]")
-    print("    * X-axis: right (positive)")
-    print("    * Y-axis: up (positive)")
-    print("    * Z-axis: viewing direction is -Z (negative)")
-    print("  - Quaternion format: [w, x, y, z] (PyTorch3D convention)")
+    print(f"Translation (camera frame): [{translation[0]:.4f}, {translation[1]:.4f}, {translation[2]:.4f}]")
+    print(f"Rotation (quaternion [w, x, y, z]): [{rotation[0]:.4f}, {rotation[1]:.4f}, {rotation[2]:.4f}, {rotation[3]:.4f}]")
+    print(f"Scale: [{scale[0]:.4f}, {scale[1]:.4f}, {scale[2]:.4f}]")
+    print("\nFrame Details:")
+    print("- Transformation from object's local coordinate to the camera coordinate frame (right-handed system)")
+    print("  * Origin: camera position [0, 0, 0]")
+    print("  * X-axis: right (positive)")
+    print("  * Y-axis: up (positive)")
+    print("  * Z-axis: viewing direction is -Z (negative)")
+    print("- Quaternion format: [w, x, y, z] (PyTorch3D convention)")
     
     if save_path is not None and save_pose:
         with open(save_path, 'w') as f:
             json.dump(pose_info, f, indent=2)
-        print(f"\n  Pose information saved to: {save_path}")
+        print(f"\nPose information saved to: {save_path}")
     
     return pose_info
-
-
-def visualize_mesh(output: dict, ply_path: Optional[str] = None):
-    """
-    Visualize generated mesh
-    
-    Args:
-        output: Output dictionary from SAM3D
-        interactive: Whether to use interactive visualization
-        ply_path: Path to PLY file for interactive visualization
-    """
-    if ply_path is not None and os.path.exists(ply_path):
-        print("\nLaunching interactive mesh visualizer...")
-        interactive_visualizer(ply_path)
-
-    else:
-        print("Warning: No mesh data found in output")
 
 
 def process_image_to_mesh(
@@ -431,9 +418,9 @@ def process_image_to_mesh(
     save_mask: bool = True,
     save_mesh: bool = True,
     save_pose: bool = True,
-    visualize: bool = True,
     seed: int = 42,
     checkpoint_path: Optional[str] = None,
+    generate_mesh: bool = True,  # If True, generate both mesh and gs; if False, only gs
 ):
     """
     Complete pipeline: Image -> SAM3 mask -> SAM3D mesh
@@ -446,11 +433,11 @@ def process_image_to_mesh(
         sam3d_config_path: Path to SAM3D config file
         output_dir: Directory to save outputs
         save_mask: Whether to save mask image
-        save_mesh: Whether to save mesh PLY file
+        save_mesh: Whether to save 3D output files
         save_pose: Whether to save pose information
-        visualize: Whether to visualize results
         seed: Random seed for SAM3D
         checkpoint_path: Path to SAM3 checkpoint (optional)
+        generate_mesh: If True, generate both mesh and gaussian splatting; if False, only gaussian splatting
     """
     device = setup_device()
     
@@ -524,33 +511,54 @@ def process_image_to_mesh(
     
     # Generate mesh with SAM3D
     if sam3d_config_path is not None:
-        print("\n=== Step 4: Generating mesh with SAM3D ===")
+        print("\n=== Step 4: Generating 3D representation with SAM3D ===")
         mesh_output = generate_mesh_with_sam3d(
             image=image_np,  # [H, W, 3] RGB - same shape as masked_image
             mask=selected_mask,  # [H, W] binary mask (0 or 1)
             config_path=sam3d_config_path,
             seed=seed,
             output_dir=output_dir,
-            save_ply=save_mesh,
-            skip_mesh=False,  # Try with mesh first, will auto-recover if error
+            generate_mesh=generate_mesh,
         )
 
-        # Save mesh
+        # Save outputs
+        saved_paths = {"gs": None, "mesh": None}
         if save_mesh and output_dir is not None:
             os.makedirs(output_dir, exist_ok=True)
-            ply_path = os.path.join(output_dir, f"{selected_index}_mesh.ply") if output_dir is not None else None
+            print(f"\n=== Saving 3D outputs ===")
+            print(f"  GS format: PLY (fixed)")
+            print(f"  Mesh format: GLB (fixed, SAM3D default)")
+            
+            # Save gaussian splatting (always PLY)
             if "gs" in mesh_output:
-                mesh_output["gs"].save_ply(ply_path)
-                print(f"\nMesh saved to: {ply_path}")
+                gs_path = os.path.join(output_dir, f"{selected_index}_gs.ply")
+                try:
+                    mesh_output["gs"].save_ply(gs_path)
+                    print(f"  Gaussian splatting saved to: {gs_path}")
+                    saved_paths["gs"] = gs_path
+                except Exception as e:
+                    print(f"  Failed to save gaussian splatting: {e}")
+            
+            # Save mesh (always GLB, SAM3D default format)
+            if generate_mesh:
+                if "glb" in mesh_output:
+                    mesh_obj = mesh_output["glb"]
+                    if mesh_obj is not None:
+                        mesh_path = os.path.join(output_dir, f"{selected_index}_mesh.glb")
+                        try:
+                            mesh_obj.export(mesh_path)
+                            print(f"  Mesh saved to: {mesh_path}")
+                            saved_paths["mesh"] = mesh_path
+                        except Exception as e:
+                            print(f"  Failed to save mesh (glb): {e}")
+                
+                if saved_paths["mesh"] is None:
+                    print(f"  Warning: Mesh not available in output (only gaussian splatting was generated)")
         
         # Extract, print, and save pose information
         print("\n=== Step 5: Pose Estimation ===")
         pose_path = os.path.join(output_dir, f"{selected_index}_pose.json") if output_dir is not None else None
         pose_info = process_pose_estimation(mesh_output, save_path=pose_path, save_pose=save_pose)
-        
-        # Visualize
-        if visualize:
-            visualize_mesh(mesh_output, ply_path=ply_path)
         
         return selected_mask, mesh_output
 
@@ -560,14 +568,13 @@ def process_image_to_mesh(
     
 
 
-
 def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="SAM3 Mask Generation and SAM3D Mesh Reconstruction")
-    parser.add_argument("--image", type=str, required=False,
+    parser.add_argument("--input", type=str, required=False,
                        default=os.path.join(PROJECT_ROOT, "notebook", "images", "kid_box", "image.png"),
-                       help="Input image path")
+                       help="Input image path (.jpg, .png)")
     parser.add_argument("--text-prompt", type=str, default=None,
                        help="Text prompt for SAM3 (e.g., 'shoe', 'person')")
     parser.add_argument("--boxes", type=str, default=None,
@@ -585,9 +592,9 @@ def main():
     parser.add_argument("--no-save-mask", action="store_true",
                        help="Do not save mask images")
     parser.add_argument("--no-save-mesh", action="store_true",
-                       help="Do not save mesh PLY file")
-    parser.add_argument("--no-visualize", action="store_true",
-                       help="Do not visualize results")
+                       help="Do not save 3D output files")
+    parser.add_argument("--gs-only", action="store_true",
+                       help="Generate only gaussian splatting (no mesh). Default: generate both mesh and gs")
     
     args = parser.parse_args()
     
@@ -619,7 +626,7 @@ def main():
             print(f"  Expected at: {default_config}")
     
     process_image_to_mesh(
-        image_path=args.image,
+        image_path=args.input,
         text_prompt=args.text_prompt,
         boxes=boxes,
         box_labels=box_labels,
@@ -627,9 +634,9 @@ def main():
         output_dir=args.output_dir,
         save_mask=not args.no_save_mask,
         save_mesh=not args.no_save_mesh,
-        visualize=not args.no_visualize,
         seed=args.seed,
         checkpoint_path=args.checkpoint,
+        generate_mesh=not args.gs_only,  # If gs_only, generate_mesh=False
     )
 
 

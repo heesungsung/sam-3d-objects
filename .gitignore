@@ -1,5 +1,7 @@
 __pycache__
 notebook/images/
+notebook/isaac_output/
 **/.gradio/
 **/checkpoints/**
 /third_party
+.vscode
