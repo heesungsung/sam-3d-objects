@@ -5,6 +5,7 @@ import re
 import torch
 import numpy as np
 import pandas as pd
+from typing import Optional
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 GEAL_PATH = os.path.join(PROJECT_ROOT, "third_party", "geal")
@@ -113,6 +114,47 @@ def load_question_table(data_root: str) -> pd.DataFrame:
     return questions
 
 
+def _generate_default_question(object_class: str, affordance: str) -> str:
+    """
+    Generate a default question template for object-affordance pairs not in CSV.
+    
+    Args:
+        object_class: Object class name
+        affordance: Affordance type
+    
+    Returns:
+        Default question string
+    """
+    templates = {
+        "grasp": f"if you want to grab the {object_class}, at which points will your palm position be ?",
+        "wrap_grasp": f"if you wrap-grasp the {object_class}, at which points on the {object_class} wall will your palm touch ?",
+        "contain": f"if you package things into the {object_class}, at which points in this {object_class} would you put?",
+        "pour": f"suppose there is water in the {object_class}, and you want to pour the water out of the {object_class}. from which points on the {object_class} will the water flow out?",
+        "open": f"if you want to open the {object_class}, from which points of the {object_class} would you open it ?",
+        "close": f"if you want to close the {object_class}, at which points would you close it ?",
+        "lift": f"if you want to lift the {object_class}, at which points would you lift it ?",
+        "move": f"if you want to move the {object_class}, at which points would you move it ?",
+        "push": f"if you want to push the {object_class}, at which points would you push it ?",
+        "pull": f"if you want to pull the {object_class}, at which points would you pull it ?",
+        "press": f"if you want to press the {object_class}, at which points would you press it ?",
+        "sit": f"if you were to sit on the {object_class}, at which points on the {object_class} would you sit ?",
+        "lay": f"if you were to lie on the {object_class}, which points would you lie on the {object_class} ?",
+        "support": f"if you put something on the {object_class}, at which points on the {object_class} would you put it ?",
+        "display": f"if you want to display something on the {object_class}, at which points would you display it ?",
+        "wear": f"if you want to wear the {object_class}, at which points would you wear it ?",
+        "listen": f"if you want to listen with the {object_class}, at which points would you use it ?",
+        "cut": f"if you want to cut something with the {object_class}, at which points would you cut it ?",
+        "stab": f"if you want to stab something with the {object_class}, at which points would you stab it ?",
+    }
+    
+    # Return specific template if available, otherwise use generic template
+    if affordance in templates:
+        return templates[affordance]
+    else:
+        # Generic fallback template
+        return f"if you want to {affordance} the {object_class}, at which points would you {affordance} it ?"
+
+
 def generate_questions(
     object_class: str,
     affordance: str,
@@ -149,14 +191,13 @@ def generate_questions(
             [qid]
         ]
     
+    # If not found in CSV, generate default question template
     if row.empty:
-        raise ValueError(
-            f"No question found for {object_class}-{affordance}.\n"
-            f"Available objects: {questions_df['Object'].unique()}\n"
-            f"Available affordances: {questions_df['Affordance'].unique()}"
-        )
+        print(f"Warning: No question found for {object_class}-{affordance} in CSV. Using default template.")
+        base_question = _generate_default_question(object_class, affordance)
+    else:
+        base_question = row.iloc[0][qid]
     
-    base_question = row.iloc[0][qid]
     questions = [
         (f"This is a depth map of a {object_class} viewed {vp}. {base_question}",)
         for vp in VIEWPOINTS
@@ -231,6 +272,129 @@ def save_pair_to_ply(
     return pred_path
 
 
+def afford3d_single(
+    ply_path: str,
+    affordance: str,
+    object_class: str = "object",
+    config_path: Optional[str] = None,
+    checkpoint_path: Optional[str] = None,
+    data_root: Optional[str] = None,
+    device: str = "cuda",
+    seed: Optional[int] = None,
+) -> str:
+    """
+    Run GEAL inference on a single PLY file to generate affordance map.
+    
+    Args:
+        ply_path: Path to input PLY file
+        affordance: Affordance type (e.g., "grasp", "contain")
+        object_class: Object class name (e.g., "bottle")
+        config_path: Path to config file (defaults to evaluation.yaml)
+        checkpoint_path: Path to checkpoint (overrides config)
+        data_root: Data root directory containing Affordance-Question.csv
+        device: Device (cuda/cpu)
+        seed: Random seed
+    
+    Returns:
+        output_path: Path to saved affordance PLY file
+    """
+    # Load config and set defaults
+    if config_path is None:
+        config_path = os.path.join(GEAL_PATH, "config", "evaluation.yaml")
+    cfg = read_yaml(config_path)
+    device = torch.device(device if torch.cuda.is_available() else "cpu")
+    
+    if seed is not None:
+        seed_torch(seed)
+    elif "seed" in cfg:
+        seed_torch(cfg["seed"])
+    
+    # Set checkpoint path
+    if checkpoint_path is None:
+        checkpoint_path = cfg.get("ckpt", "ckpt/piad_seen.pt")
+        if not os.path.isabs(checkpoint_path):
+            checkpoint_path = os.path.join(GEAL_PATH, checkpoint_path)
+            checkpoint_path = os.path.normpath(checkpoint_path)
+    
+    # Set data root
+    if data_root is None:
+        data_root = cfg.get("data_root", "dataset/piad_dataset")
+        if not os.path.isabs(data_root):
+            data_root = os.path.join(GEAL_PATH, data_root)
+            data_root = os.path.normpath(data_root)
+    
+    # Validate
+    if object_class not in CLASSES:
+        print(f"Warning: '{object_class}' not in predefined object classes.")
+        print(f"Available: {', '.join(CLASSES)}")
+        print("Proceeding anyway (model may still work)...")
+
+    if affordance not in AFFORDANCES:
+        print(f"Warning: '{affordance}' not in predefined affordances.")
+        print(f"Available: {', '.join(AFFORDANCES)}")
+        print("Proceeding anyway (model may still work)...")
+    
+    # Inference
+    print("\nLoading model...")
+    model_cfg = cfg["model_3d"]
+    model = Branch3D(model_cfg)
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(ckpt["model"], strict=False)
+    model.to(device)
+    print(f"Loaded checkpoint: {checkpoint_path}")
+
+    print(f"\nLoading PLY file: {ply_path}")
+    points = load_ply_file(ply_path)
+    
+    print("\nPreprocessing point cloud...")
+    point_input = preprocess_point_cloud(points)
+    
+    print(f"\nLoading question table from: {data_root}")
+    questions_df = load_question_table(data_root)
+    
+    print(f"Generating questions for {object_class}-{affordance}...")
+    questions = generate_questions(
+        object_class,
+        affordance,
+        questions_df,
+        split="test"  # Use Question0 for consistency
+    )
+    print(f"  Base question: {questions[0][0]}")
+    
+    print("\nRunning inference...")
+    affordance_map = run_inference(model, point_input, questions, device)
+    
+    # Save results
+    # Parse filename (assumes format: {number}_gs.ply)
+    input_basename = os.path.splitext(os.path.basename(ply_path))[0]
+    input_dir = os.path.dirname(os.path.abspath(ply_path)) or "."
+    match = re.match(r'^(\d+)_gs$', input_basename)
+    if match:
+        number = match.group(1)
+    else:
+        number = input_basename
+        print(f"Warning: Input filename '{input_basename}' doesn't match expected pattern '{{number}}_gs', using '{number}' as prefix")
+    
+    # Generate output filename: {number}_aff_{object}_{affordance}.ply
+    output_filename = f"{number}_aff_{object_class}_{affordance}.ply"
+    output_path = os.path.join(input_dir, output_filename)
+    
+    print(f"\nSaving results...")
+    print(f"  Output directory: {input_dir}")
+    print(f"  Output filename: {output_filename}")
+    
+    point_input_np = point_input.squeeze(0).T.cpu().numpy()  # (1, 3, 2048) -> (2048, 3)
+    
+    if affordance_map.ndim > 1:
+        affordance_map = affordance_map.squeeze()
+    
+    save_pair_to_ply(point_input_np, affordance_map, input_dir, output_filename)
+    print(f"  Saved to: {output_path}")
+    print("\nInference complete!")
+    
+    return output_path
+
+
 def main():
     parser = argparse.ArgumentParser(description="GEAL Inference on Single PLY File")
     parser.add_argument("--input", type=str, required=True, help="Input PLY file path")
@@ -260,99 +424,16 @@ def main():
     
     args = parser.parse_args()
     
-    # Load config and set defaults
-    cfg = read_yaml(args.config)
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    
-    if args.seed is not None:
-        seed_torch(args.seed)
-    elif "seed" in cfg:
-        seed_torch(cfg["seed"])
-    
-    # Set checkpoint path
-    checkpoint_path = args.checkpoint
-    if checkpoint_path is None:
-        checkpoint_path = cfg.get("ckpt", "ckpt/piad_seen.pt")
-        if not os.path.isabs(checkpoint_path):
-            checkpoint_path = os.path.join(GEAL_PATH, checkpoint_path)
-            checkpoint_path = os.path.normpath(checkpoint_path)
-    
-    # Set data root
-    data_root = args.data_root
-    if data_root is None:
-        data_root = cfg.get("data_root", "dataset/piad_dataset")
-        if not os.path.isabs(data_root):
-            data_root = os.path.join(GEAL_PATH, data_root)
-            data_root = os.path.normpath(data_root)
-    
-    # Validate
-    if args.object_class not in CLASSES:
-        print(f"Warning: '{args.object_class}' not in predefined object classes.")
-        print(f"Available: {', '.join(CLASSES)}")
-        print("Proceeding anyway (model may still work)...")
-
-    if args.affordance not in AFFORDANCES:
-        print(f"Warning: '{args.affordance}' not in predefined affordances.")
-        print(f"Available: {', '.join(AFFORDANCES)}")
-        print("Proceeding anyway (model may still work)...")
-    
-    # Inference
-    print("Loading model...")
-    model_cfg = cfg["model_3d"]
-    model = Branch3D(model_cfg)
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(ckpt["model"], strict=False)
-    model.to(device)
-    print(f"Loaded checkpoint: {checkpoint_path}")
-
-    print(f"\nLoading PLY file: {args.input}")
-    points = load_ply_file(args.input)
-    
-    print("\nPreprocessing point cloud...")
-    point_input = preprocess_point_cloud(points)
-    
-    print(f"\nLoading question table from: {data_root}")
-    questions_df = load_question_table(data_root)
-    
-    print(f"\nGenerating questions for {args.object_class} - {args.affordance}...")
-    questions = generate_questions(
-        args.object_class,
-        args.affordance,
-        questions_df,
-        split="test"  # Use Question0 for consistency
+    afford3d_single(
+        ply_path=args.input,
+        affordance=args.affordance,
+        object_class=args.object_class,
+        config_path=args.config,
+        checkpoint_path=args.checkpoint,
+        data_root=args.data_root,
+        device=args.device,
+        seed=args.seed,
     )
-    print(f"  Base question: {questions[0][0]}")
-    
-    print("\nRunning inference...")
-    affordance_map = run_inference(model, point_input, questions, device)
-    
-    # Save results
-    # Parse filename (assumes format: {number}_gs.ply)
-    input_basename = os.path.splitext(os.path.basename(args.input))[0]
-    input_dir = os.path.dirname(os.path.abspath(args.input)) or "."
-    match = re.match(r'^(\d+)_gs$', input_basename)
-    if match:
-        number = match.group(1)
-    else:
-        number = input_basename
-        print(f"Warning: Input filename '{input_basename}' doesn't match expected pattern '{{number}}_gs', using '{number}' as prefix")
-    
-    # Generate output filename: {number}_aff_{object}_{affordance}.ply
-    output_filename = f"{number}_aff_{args.object_class}_{args.affordance}.ply"
-    output_path = os.path.join(input_dir, output_filename)
-    
-    print(f"\nSaving results...")
-    print(f"  Output directory: {input_dir}")
-    print(f"  Output filename: {output_filename}")
-    
-    point_input_np = point_input.squeeze(0).T.cpu().numpy()  # (1, 3, 2048) -> (2048, 3)
-    
-    if affordance_map.ndim > 1:
-        affordance_map = affordance_map.squeeze()
-    
-    save_pair_to_ply(point_input_np, affordance_map, input_dir, output_filename)
-    print(f"  Saved to: {output_path}")
-    print("\nInference complete!")
 
 
 if __name__ == "__main__":
