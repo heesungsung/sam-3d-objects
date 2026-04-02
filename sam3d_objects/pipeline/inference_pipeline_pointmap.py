@@ -91,10 +91,7 @@ def compile_wrapper(
 class InferencePipelinePointMap(InferencePipeline):
 
     def __init__(
-        self, *args, depth_model,
-        layout_post_optimization_method=layout_post_optimization,
-        layout_post_optimization_method_GS=layout_post_optimization_method_GS,
-        clip_pointmap_beyond_scale=None, **kwargs
+        self, *args, depth_model, layout_post_optimization_method=layout_post_optimization, layout_post_optimization_method_GS=layout_post_optimization_method_GS, clip_pointmap_beyond_scale=None, **kwargs
     ):
         self.depth_model = depth_model
         self.layout_post_optimization_method = layout_post_optimization_method
@@ -212,13 +209,13 @@ class InferencePipelinePointMap(InferencePipeline):
             item["pointmap_shift"] = _item["pointmap_shift"][None].to(self.device)
             item["rgb_pointmap_scale"] = _item["rgb_pointmap_scale"][None].to(self.device)
             item["rgb_pointmap_shift"] = _item["rgb_pointmap_shift"][None].to(self.device)
-        
+
         # Add unnormed pointmap for post-optimization
         if pointmap is not None and preprocessor.pointmap_transform != (None,):
             full_pointmap = self._apply_transform(
                 pointmap, preprocessor.pointmap_transform
             )
-            item["rgb_pointmap_unnorm"] = full_pointmap[None].to(self.device)      
+            item["rgb_pointmap_unnorm"] = full_pointmap[None].to(self.device)            
 
         return item
 
@@ -292,13 +289,9 @@ class InferencePipelinePointMap(InferencePipeline):
                     mode="nearest",
                 ).squeeze(0).permute(1, 2, 0)
             intrinsics = None
-
-        # points_tensor = points_tensor.permute(2, 0, 1)
-        # points_tensor = self._clip_pointmap(points_tensor, loaded_mask)
         
         # Prepare the point map tensor
         point_map_tensor = {
-            "pointmap": points_tensor,
             "pts_color": loaded_image,
         }
 
@@ -314,7 +307,6 @@ class InferencePipelinePointMap(InferencePipeline):
                 points_tensor_moge, device=self.device
             )
             point_map_tensor["intrinsics"] = intrinsics_result["intrinsics"]
-        
         else:
             point_map_tensor["intrinsics"] = intrinsics
 
@@ -389,7 +381,6 @@ class InferencePipelinePointMap(InferencePipeline):
             "iou_before_optim": initial_iou,
             "optim_accepted": flag_optim,
         }
-
 
     def run(
         self,
@@ -503,7 +494,6 @@ class InferencePipelinePointMap(InferencePipeline):
                         logger.info("Finished mesh post-optimization!")
                     else:
                         logger.info("No post-optimization method available (no GS or mesh found)")
-
             except Exception as e:
                 logger.error(
                     f"Error during layout post optimization: {e}", exc_info=True

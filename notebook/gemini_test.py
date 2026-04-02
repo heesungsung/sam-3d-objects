@@ -278,7 +278,15 @@ def find_object_with_gemini(image_path: str, user_prompt: str) -> Tuple[List[dic
     return bboxes, output_dir
 
 
-def process_with_sam3d(image_path: str, bboxes: List[dict], sam3d_config_path: Optional[str] = None, output_dir: Optional[str] = None):
+def process_with_sam3d(
+    image_path: str,
+    bboxes: List[dict],
+    sam3d_config_path: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    with_layout_postprocess: bool = True,
+    with_mesh_postprocess: bool = True,
+    with_texture_baking: bool = True,
+):
     """
     Process image with SAM3D using bounding boxes from Gemini
     
@@ -287,6 +295,9 @@ def process_with_sam3d(image_path: str, bboxes: List[dict], sam3d_config_path: O
         bboxes: List of bbox dicts from Gemini (format: {"box_2d": [ymin, xmin, ymax, xmax], "label": "..."})
         sam3d_config_path: Path to SAM3D config file
         output_dir: Output directory for SAM3D results
+        with_layout_postprocess: If True, run layout postprocess for pose refinement
+        with_mesh_postprocess: If True, run mesh postprocess
+        with_texture_baking: If True, run texture baking
     """
     print(f"\nMoving to SAM3D...")
     
@@ -330,6 +341,9 @@ def process_with_sam3d(image_path: str, bboxes: List[dict], sam3d_config_path: O
         save_pose=True,
         generate_mesh=True,
         is_vlm=True,
+        with_layout_postprocess=with_layout_postprocess,
+        with_mesh_postprocess=with_mesh_postprocess,
+        with_texture_baking=with_texture_baking,
     )
     
     return saved_paths
@@ -349,6 +363,12 @@ def main():
                        help="Output directory (optional)")
     parser.add_argument("--no-afford", action="store_true",
                        help="Skip affordance map generation using GEAL (default: generate affordance)")
+    parser.add_argument("--no-postprocess", action="store_true",
+                       help="Disable layout postprocess (default: enabled)")
+    parser.add_argument("--no-mesh-postprocess", action="store_true",
+                       help="Disable mesh postprocess (default: enabled)")
+    parser.add_argument("--no-texture-baking", action="store_true",
+                       help="Disable texture baking (default: enabled)")
     
     args = parser.parse_args()
     
@@ -374,6 +394,9 @@ def main():
         bboxes=bboxes,
         sam3d_config_path=args.sam3d_config,
         output_dir=output_dir,
+        with_layout_postprocess=not args.no_postprocess,
+        with_mesh_postprocess=not args.no_mesh_postprocess,
+        with_texture_baking=not args.no_texture_baking,
     )
     
     if not args.no_afford:

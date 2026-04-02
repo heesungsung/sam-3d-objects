@@ -315,6 +315,9 @@ def generate_mesh_with_sam3d(
     seed: Optional[int] = 42,
     output_dir: Optional[str] = None,
     generate_mesh: bool = True,
+    with_layout_postprocess: bool = True,
+    with_mesh_postprocess: bool = True,
+    with_texture_baking: bool = True,
 ) -> dict:
     """
     Generate mesh using SAM3D from original image and binary mask
@@ -326,6 +329,9 @@ def generate_mesh_with_sam3d(
         seed: Random seed
         output_dir: Directory to save outputs
         generate_mesh: If True, generate both mesh and gaussian splatting; if False, only gaussian splatting
+        with_layout_postprocess: If True, run layout postprocess for pose refinement
+        with_mesh_postprocess: If True, run mesh postprocess
+        with_texture_baking: If True, run texture baking
     
     Returns:
         output: Dictionary containing mesh and/or gaussian splatting outputs
@@ -334,6 +340,22 @@ def generate_mesh_with_sam3d(
     inference = Inference(config_path, compile=False)
     
     print("\nGenerating 3D representation with SAM3D...")
+
+    def run_sam3d_inference(decode_formats_to_use: List[str]) -> dict:
+        rgba_image = inference.merge_mask_to_rgba(image, mask)
+        return inference._pipeline.run(
+            rgba_image,
+            None,
+            seed,
+            stage1_only=False,
+            with_mesh_postprocess=with_mesh_postprocess,
+            with_texture_baking=with_texture_baking,
+            with_layout_postprocess=with_layout_postprocess,
+            use_vertex_color=True,
+            stage1_inference_steps=None,
+            pointmap=None,
+            decode_formats=decode_formats_to_use,
+        )
     
     # Determine decode formats
     if generate_mesh:
@@ -344,7 +366,7 @@ def generate_mesh_with_sam3d(
         print("  Generating gaussian splatting only")
     
     try:
-        output = inference(image, mask, seed=seed, decode_formats=decode_formats)
+        output = run_sam3d_inference(decode_formats)
     except RuntimeError as e:
         error_msg = str(e)
         if "spconv" in error_msg.lower() or "can't find suitable algorithm" in error_msg:
@@ -352,7 +374,7 @@ def generate_mesh_with_sam3d(
             if generate_mesh:
                 try:
                     print("  Retrying with gaussian splatting only (mesh skipped)...")
-                    output = inference(image, mask, seed=seed, decode_formats=["gaussian"])
+                    output = run_sam3d_inference(["gaussian"])
                     print("  Successfully generated gaussian splatting (mesh skipped)")
                 except Exception as e2:
                     print(f"  Recovery failed: {e2}")
@@ -542,6 +564,9 @@ def recond3d_single(
     checkpoint_path: Optional[str] = None,
     generate_mesh: bool = True,
     is_vlm: bool = False,
+    with_layout_postprocess: bool = True,
+    with_mesh_postprocess: bool = True,
+    with_texture_baking: bool = True,
 ):
     """
     Complete pipeline: Image -> SAM3 mask -> SAM3D reconstruction
@@ -560,6 +585,9 @@ def recond3d_single(
         checkpoint_path: Path to SAM3 checkpoint (optional)
         generate_mesh: If True, generate both mesh and gaussian splatting; if False, only gaussian splatting
         is_vlm: If True, indicates this is from VLM (e.g., Gemini) and should auto-select best mask
+        with_layout_postprocess: If True, run layout postprocess for pose refinement
+        with_mesh_postprocess: If True, run mesh postprocess
+        with_texture_baking: If True, run texture baking
     """
     device = setup_device()
     
@@ -649,6 +677,9 @@ def recond3d_single(
             seed=seed,
             output_dir=output_dir,
             generate_mesh=generate_mesh,
+            with_layout_postprocess=with_layout_postprocess,
+            with_mesh_postprocess=with_mesh_postprocess,
+            with_texture_baking=with_texture_baking,
         )
 
         # Save outputs
@@ -725,6 +756,12 @@ def main():
                        help="Do not save 3D output files")
     parser.add_argument("--gs-only", action="store_true",
                        help="Generate only gaussian splatting (no mesh). Default: generate both mesh and gs")
+    parser.add_argument("--no-postprocess", action="store_true",
+                       help="Disable layout postprocess (default: enabled)")
+    parser.add_argument("--no-mesh-postprocess", action="store_true",
+                       help="Disable mesh postprocess (default: enabled)")
+    parser.add_argument("--no-texture-baking", action="store_true",
+                       help="Disable texture baking (default: enabled)")
     
     args = parser.parse_args()
     
@@ -767,6 +804,9 @@ def main():
         seed=args.seed,
         checkpoint_path=args.checkpoint,
         generate_mesh=not args.gs_only,  # If gs_only, generate_mesh=False
+        with_layout_postprocess=not args.no_postprocess,
+        with_mesh_postprocess=not args.no_mesh_postprocess,
+        with_texture_baking=not args.no_texture_baking,
     )
 
 

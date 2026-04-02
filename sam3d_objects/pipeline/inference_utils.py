@@ -96,7 +96,7 @@ def layout_post_optimization(
     logger.info(f"Starting!")
     set_seed(100)
     if device is None:
-        # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # Get device from input tensors instead of defaulting to cuda:0
         device = quaternion.device
 
     # Initialize transformation and process mesh
@@ -188,7 +188,6 @@ def layout_post_optimization(
             .translate(translation_2[None])
         )
     logger.info(f"Step 2 Done!")
-
     # Step 3: Render-and-Compare
     if not Enable_rendering_optimization:
         Flag_optim = False
@@ -461,6 +460,7 @@ def layout_post_optimization_method_GS(
         Flag_ICP,
         Flag_optim,
     )
+
 
 def pose_decoder(
     pose_target_convention,

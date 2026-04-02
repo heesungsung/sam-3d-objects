@@ -10,6 +10,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import os
 import torch
 import math
 from easydict import EasyDict as edict
@@ -19,6 +20,15 @@ from .sh_utils import eval_sh
 import torch.nn.functional as F
 from easydict import EasyDict as edict
 import warnings
+
+def _suppress_gsplat_nvcc_warnings():
+    # Suppress known NVCC warning from glm headers during gsplat build.
+    flag = "--diag-suppress=20012"
+    for env_var in ("TORCH_NVCC_FLAGS", "NVCC_FLAGS"):
+        existing = os.environ.get(env_var, "")
+        if flag not in existing.split():
+            os.environ[env_var] = (existing + " " + flag).strip()
+
 
 try:
     from diff_gaussian_rasterization import (
@@ -31,6 +41,7 @@ except ImportError:
         ImportWarning,
     )
 
+_suppress_gsplat_nvcc_warnings()
 from gsplat import rasterization
 
 
@@ -340,5 +351,5 @@ class GaussianRenderer:
             else:
                 ret["alpha"] = render_ret["alpha"]
                 ret["rgba"] = render_ret["rgba"]
-                
+
         return ret
